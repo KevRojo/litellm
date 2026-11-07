@@ -163,6 +163,7 @@ from litellm.proxy.vector_store_endpoints.endpoints import build_request_data_fr
 from litellm.proxy.vector_store_endpoints.utils import (
     assert_proxy_admin_for_vector_store_index_management,
     assert_user_can_access_vector_store,
+    assert_user_can_call_vector_store_passthrough,
     assert_vector_store_index_access,
     get_litellm_managed_vector_store,
     has_vector_store_index_access,
@@ -1015,9 +1016,8 @@ async def milvus_proxy_route(
     )
     if vector_store is None:
         raise Exception(f"Vector store not found for {vector_store_name}")
-    await assert_user_can_access_vector_store(
-        vector_store=vector_store,
-        user_api_key_dict=user_api_key_dict,
+    await assert_user_can_call_vector_store_passthrough(
+        vector_store, user_api_key_dict, provider_config, request.method, endpoint
     )
     litellm_params = vector_store.get("litellm_params") or {}
     auth_credentials: Final = provider_config.get_auth_credentials(litellm_params=litellm_params)
@@ -2745,9 +2745,8 @@ async def azure_proxy_route(
                 )
                 if vector_store is None:
                     raise Exception(f"Vector store not found for {vector_store_name}")
-                await assert_user_can_access_vector_store(
-                    vector_store=vector_store,
-                    user_api_key_dict=user_api_key_dict,
+                await assert_user_can_call_vector_store_passthrough(
+                    vector_store, user_api_key_dict, provider_config, request.method, endpoint, store_segment="indexes"
                 )
                 litellm_params = vector_store.get("litellm_params") or {}
                 auth_credentials = provider_config.get_auth_credentials(litellm_params=litellm_params)
@@ -3259,10 +3258,19 @@ async def _base_vertex_proxy_route(
     encoded_endpoint = httpx.URL(endpoint).path
     verbose_proxy_logger.debug("requested endpoint %s", endpoint)
     headers: Mapping[str, str] = {}
+    # Check if model is in router config - always do this to resolve custom model names
+    model_id: Final = get_vertex_model_id_from_url(endpoint)
     if router_credentials is not None:
-        await assert_user_can_access_vector_store(
-            vector_store=router_credentials,
-            user_api_key_dict=user_api_key_dict,
+        await assert_user_can_call_vector_store_passthrough(
+            router_credentials,
+            user_api_key_dict,
+            # Router resolution below rewrites a path naming a model, so it never counts as a read.
+            None
+            if model_id
+            else ProviderConfigManager.get_provider_vector_stores_config(LlmProviders.VERTEX_AI, "search_api"),
+            request.method,
+            endpoint,
+            store_segment="dataStores",
         )
 
     vertex_project: str | None = get_vertex_project_id_from_url(endpoint)
@@ -3275,8 +3283,6 @@ async def _base_vertex_proxy_route(
         vertex_location=vertex_location,
     )
 
-    # Check if model is in router config - always do this to resolve custom model names
-    model_id: Final = get_vertex_model_id_from_url(endpoint)
     if model_id:
         if llm_router:
             # Resolve model configuration from router
