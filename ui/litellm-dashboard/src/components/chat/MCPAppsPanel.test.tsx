@@ -2,7 +2,7 @@ import React from "react";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import MCPAppsPanel from "./MCPAppsPanel";
+import MCPAppsPanel, { connectPickIds } from "./MCPAppsPanel";
 import { fetchMCPServers, listMCPTools } from "../networking";
 import type { MCPServer } from "../mcp_tools/types";
 import { setServerRootPath } from "@/lib/serverRootPath";
@@ -298,5 +298,29 @@ describe("MCPAppsPanel connected-app reachability (LIT-4861)", () => {
     });
 
     expect(screen.queryByText("revoked_srv")).not.toBeInTheDocument();
+  });
+});
+
+describe("connectPickIds", () => {
+  const server = (server_id: string, extra: Partial<MCPServer> = {}): MCPServer =>
+    ({ server_id, server_name: server_id.replace("-id", ""), auth_type: "api_key", ...extra }) as MCPServer;
+  const servers = [
+    server("catalog-id"),
+    server("inventory-id"),
+    server("warehouse-id", { auth_type: "oauth2", oauth2_flow: "client_credentials" }),
+    server("atlassian-id", { auth_type: "oauth2" }),
+    server("jira-id", { auth_type: "oauth2" }),
+    server("passthrough-id", { auth_type: "true_passthrough" }),
+  ];
+  const available = (s: MCPServer) => s.auth_type !== "true_passthrough";
+
+  it("posts ids for servers shown as on, m2m always, user OAuth only once connected", () => {
+    expect(
+      connectPickIds(servers, ["catalog", "atlassian", "jira", "passthrough"], new Set(["atlassian-id"]), available),
+    ).toEqual(["catalog-id", "warehouse-id", "atlassian-id"]);
+  });
+
+  it("ignores selected names the page did not load", () => {
+    expect(connectPickIds(servers, ["chat-only-server"], new Set(), available)).toEqual(["warehouse-id"]);
   });
 });

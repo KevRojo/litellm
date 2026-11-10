@@ -14,6 +14,7 @@ interface Props {
   accessToken: string;
   onConnected: () => void;
   failed: boolean;
+  pickedServerIds?: readonly string[];
 }
 
 /** Finish remains an explicit POST because a cross-site navigation must never mint a code. */
@@ -89,7 +90,14 @@ const vendorServersFor = (
   return [{ server_id: flow.server_id, server_name: flow.server_name }];
 };
 
-const ConnectFlowBanner: React.FC<Props> = ({ flowHandle, flow, accessToken, onConnected, failed }) => {
+const ConnectFlowBanner: React.FC<Props> = ({
+  flowHandle,
+  flow,
+  accessToken,
+  onConnected,
+  failed,
+  pickedServerIds = [],
+}) => {
   const { t } = useTranslation();
   const action = `${getProxyBaseUrl()}/authorize/complete`;
   const state = failed || flow === undefined ? "stale" : flow.state;
@@ -130,6 +138,8 @@ const ConnectFlowBanner: React.FC<Props> = ({ flowHandle, flow, accessToken, onC
           ))}
           <form method="POST" action={action}>
             <input type="hidden" name="flow" value={flowHandle} />
+            {state === "unscoped" &&
+              pickedServerIds.map((serverId) => <input key={serverId} type="hidden" name="server" value={serverId} />)}
             {canFinish && (
               <button
                 type="submit"

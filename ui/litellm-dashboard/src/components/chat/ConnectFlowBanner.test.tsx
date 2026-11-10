@@ -27,7 +27,7 @@ const unscoped = (client_origin: string): ConnectFlowStatus => ({
   servers: null,
 });
 
-const renderBanner = (clientOrigin: string) =>
+const renderBanner = (clientOrigin: string, pickedServerIds: string[] = []) =>
   render(
     <ConnectFlowBanner
       flowHandle="flow-handle-123"
@@ -35,11 +35,12 @@ const renderBanner = (clientOrigin: string) =>
       accessToken="tok"
       onConnected={vi.fn()}
       failed={false}
+      pickedServerIds={pickedServerIds}
     />,
   );
 
 describe("ConnectFlowBanner", () => {
-  it("posts only the flow handle to the proxy /authorize/complete as a full-page form", () => {
+  it("posts only the flow handle to the proxy /authorize/complete when nothing is picked", () => {
     const { container } = renderBanner("https://claude.ai");
 
     const form = container.querySelector("form")!;
@@ -47,8 +48,17 @@ describe("ConnectFlowBanner", () => {
     expect(form).toHaveAttribute("action", "https://gateway.example.com/authorize/complete");
     expect(screen.getByDisplayValue("flow-handle-123")).toHaveAttribute("name", "flow");
     expect(form.innerHTML).not.toContain("token");
-    expect(screen.getByRole("button", { name: /finish connecting/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /finish connecting/i })).toBeEnabled();
+    expect(screen.queryByDisplayValue("catalog-id")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  it("posts each picked server with Finish so the token covers only those", () => {
+    renderBanner("https://claude.ai", ["catalog-id", "atlassian-id"]);
+
+    expect(screen.getByDisplayValue("catalog-id")).toHaveAttribute("name", "server");
+    expect(screen.getByDisplayValue("atlassian-id")).toHaveAttribute("name", "server");
+    expect(screen.getByRole("button", { name: /finish connecting/i })).toBeEnabled();
   });
 
   it("lists multi-server consent and requires every server before finishing", () => {

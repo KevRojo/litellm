@@ -96,7 +96,25 @@ interface Props {
   selectedServers: string[];
   onChange: (servers: string[]) => void;
   connectMode?: boolean;
+  onConnectPicksChange?: (serverIds: string[]) => void;
 }
+
+/** The ids of the loaded servers the connect page shows as on, which Finish scopes the grant to. */
+export const connectPickIds = (
+  servers: readonly MCPServer[],
+  selectedNames: readonly string[],
+  oauthConnected: ReadonlySet<string>,
+  isAvailable: (server: MCPServer) => boolean,
+): string[] =>
+  servers
+    .filter(isAvailable)
+    .filter((server) => {
+      const mode = getMcpOAuthMode(server);
+      if (mode === "m2m") return true;
+      const selected = selectedNames.includes(server.server_name ?? server.alias ?? server.server_id);
+      return mode === "authorization_code" ? selected && oauthConnected.has(server.server_id) : selected;
+    })
+    .map((server) => server.server_id);
 
 const AVATAR_COLORS = [
   "#1677ff",
@@ -121,7 +139,7 @@ type TabKey = "all" | "connected";
 
 const TOOLS_FETCH_CONCURRENCY = 5;
 
-const MCPAppsPanel: React.FC<Props> = ({ accessToken, selectedServers, onChange, connectMode }) => {
+const MCPAppsPanel: React.FC<Props> = ({ accessToken, selectedServers, onChange, connectMode, onConnectPicksChange }) => {
   const { t } = useTranslation();
   const [servers, setServers] = useState<MCPServer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -257,6 +275,12 @@ const MCPAppsPanel: React.FC<Props> = ({ accessToken, selectedServers, onChange,
       onChangeRef.current([...selectedServersRef.current, ...namesToAdd]);
     }
   }, [oauthConnected, connectUnavailabilityLabel]);
+
+  useEffect(() => {
+    if (!connectMode || onConnectPicksChange === undefined) return;
+    const isAvailable = (server: MCPServer) => connectUnavailabilityLabel(server) === null;
+    onConnectPicksChange(connectPickIds(servers, selectedServers, oauthConnected, isAvailable));
+  }, [connectMode, onConnectPicksChange, servers, selectedServers, oauthConnected, connectUnavailabilityLabel]);
 
   const handleToggle = async (server: MCPServer, checked: boolean) => {
     const serverName = nameOf(server);

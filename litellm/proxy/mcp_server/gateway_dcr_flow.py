@@ -1202,12 +1202,14 @@ async def complete_connect_flow(
     decision: str | None = None,
     lookup_vendor_credential: LookupVendorCredential = _unavailable_vendor_credential,
     lookup_server_reachability: LookupServerReachability = _unreachable_server,
+    selected_servers: Sequence[str] = (),
 ) -> Response:
     """Mint the code only after a deliberate POST by the sealed user.
 
     A scoped flow additionally requires its sealed server to have a live vendor credential
     before a code can be minted. The check happens before the single-use claim, so a
     premature submit can be retried after authorization; denial deliberately bypasses it.
+    Servers picked on the connect page narrow the grant of an unscoped flow.
     """
     if delivery not in (None, "redirect", "manual"):
         return _oauth_error(400, "invalid_request", "delivery must be 'redirect' or 'manual'")
@@ -1227,6 +1229,9 @@ async def complete_connect_flow(
             return _oauth_error(400, "invalid_request", "authorize the requested MCP server before finishing")
         if described["connected"] is False:
             return _oauth_error(400, "invalid_request", "authorize the requested MCP server before finishing")
+    narrowed: Final = opened if decision == "deny" else _narrowed_to_selection(opened, selected_servers)
+    if isinstance(narrowed, Response):
+        return narrowed
     flow_refusal: Final = _claim_refusal(
         await _SingleUseGuard(cache).claim(
             f"{_USED_FLOW_CACHE_PREFIX}{opened.jti}", CONNECT_FLOW_TTL_SECONDS + _CLAIM_TTL_BUFFER_SECONDS
@@ -1238,11 +1243,32 @@ async def complete_connect_flow(
     if flow_refusal is not None:
         return flow_refusal
     response: Final = (
-        _denied_flow_response(opened) if decision == "deny" else _approved_flow_response(opened, delivery, team_id, now)
+        _denied_flow_response(opened)
+        if decision == "deny"
+        else _approved_flow_response(narrowed, delivery, team_id, now)
     )
     path, secure = _cookie_path_and_secure(request)
     response.delete_cookie(key=_flow_cookie_name(flow_handle), path=path, secure=secure, httponly=True, samesite="lax")
     return response
+
+
+def _narrowed_to_selection(flow: _ConnectFlow, selected_server_ids: Sequence[str]) -> _ConnectFlow | Response:
+    picked_ids: Final = tuple(
+        dict.fromkeys(server_id.strip() for server_id in selected_server_ids if server_id.strip())
+    )
+    if not picked_ids or flow.resource_server_ids is not None or flow.audience is not None:
+        return flow
+    from litellm.proxy.mcp_server.mcp_server_manager import (  # noqa: PLC0415  # import cycle
+        global_mcp_server_manager,
+    )
+
+    known_ids: Final = tuple(
+        server_id for server_id in picked_ids if global_mcp_server_manager.get_mcp_server_by_id(server_id) is not None
+    )
+    if not known_ids:
+        return _oauth_error(400, "invalid_request", "the requested MCP server is no longer available")
+    upstream_ids: Final = tuple(item.server_id for item in flow.upstream_scopes)
+    return flow.model_copy(update={"resource_server_ids": tuple(dict.fromkeys((*upstream_ids, *known_ids)))})
 
 
 def _state_param(state: str) -> tuple[tuple[str, str], ...]:
